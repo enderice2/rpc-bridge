@@ -423,22 +423,29 @@ void PipeBufferOutThread(LPVOID lpParam)
 void CreateBridge()
 {
 	{
-		/* should i check if the Wine version is 11.5 or newer or still do this? */
 		print("Checking if AF_UNIX sockets are supported\n");
 		WSADATA wsa;
 		WSAStartup(MAKEWORD(2, 2), &wsa);
 		SOCKET probe = socket(AF_UNIX, SOCK_STREAM, 0);
 		if (probe == INVALID_SOCKET && WSAGetLastError() == WSAEAFNOSUPPORT)
 		{
-			static const char *(CDECL * wine_get_build_id)(void);
-			wine_get_build_id = GetProcAddress(GetModuleHandle("ntdll.dll"), "wine_get_build_id");
-			const char *build_id = wine_get_build_id();
-			if (strstr(build_id, "Staging") == NULL)
+			/* Wine 11.5+ traps raw syscalls (Syscall User Dispatch), so the fallback only
+			 * works on older Wine and Proton; newer Wine needs Staging's AF_UNIX support. */
+			HMODULE hNTdll = GetModuleHandle("ntdll.dll");
+			const char *(CDECL * wine_get_version)(void) = (void *)GetProcAddress(hNTdll, "wine_get_version");
+			const char *(CDECL * wine_get_build_id)(void) = (void *)GetProcAddress(hNTdll, "wine_get_build_id");
+			const char *version = wine_get_version ? wine_get_version() : "0.0";
+			const char *build_id = wine_get_build_id ? wine_get_build_id() : "";
+			int major = 0, minor = 0;
+			sscanf(version, "%d.%d", &major, &minor);
+			BOOL syscallsTrapped = major > 11 || (major == 11 && minor >= 5);
+			print("Wine %s (%s)\n", version, build_id);
+			if (syscallsTrapped && strstr(build_id, "Staging") == NULL)
 			{
-				print("AF_UNIX sockets are implemented only in Wine Staging.\n");
+				print("Wine 11.5 and newer need AF_UNIX sockets, which only Wine Staging implements.\n");
 				print("Please install \"winehq-staging\" package: https://wiki.winehq.org/Wine-Staging\n");
 				if (!RunningAsService)
-					MessageBox(NULL, "AF_UNIX sockets are implemented only in Wine Staging.\nPlease use the Staging branch.",
+					MessageBox(NULL, "Wine 11.5 and newer need AF_UNIX sockets, which only Wine Staging implements.\nPlease use the Staging branch.",
 							   "Error", MB_OK | MB_ICONSTOP);
 				ExitBridge(1);
 			}
